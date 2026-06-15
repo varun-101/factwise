@@ -1,0 +1,80 @@
+// Quarantine Care — data model
+// Postgres on Vercel; run `prisma db push` (or `migrate`) then `db:seed`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "cockroachdb"
+  url      = env("DATABASE_URL")
+}
+
+enum PatientStatus {
+  ACTIVE // currently admitted, occupying a room
+  DISCHARGED // cured: met the no-fever criterion and released
+  DECEASED // died in care (counts against the success rate)
+}
+
+model Patient {
+  id           String        @id @default(cuid())
+  name         String
+  // Room number 1..CAPACITY. Nullable because a room is freed (set null)
+  // when the patient leaves; uniqueness among ACTIVE patients is enforced
+  // in application logic so a freed room can be reused by a new admission.
+  roomNumber   Int?
+  status       PatientStatus @default(ACTIVE)
+  admittedAt   DateTime      @default(now())
+  // When the patient was discharged or marked deceased.
+  resolvedAt   DateTime?
+  resolutionNote String?
+
+  temperatures TemperatureReading[]
+  visits       DoctorVisit[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([status])
+}
+
+model TemperatureReading {
+  id           String   @id @default(cuid())
+  patient      Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientId    String
+  valueCelsius Float
+  takenAt      DateTime @default(now())
+  takenByName  String
+  createdAt    DateTime @default(now())
+
+  corrections  ReadingCorrection[]
+
+  @@index([patientId, takenAt])
+}
+
+// Audit trail for corrected temperatures (e.g. a 28 typed instead of 38).
+// The reading's valueCelsius is updated in place; every change is logged here.
+model ReadingCorrection {
+  id              String             @id @default(cuid())
+  reading         TemperatureReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
+  readingId       String
+  oldCelsius      Float
+  newCelsius      Float
+  correctedByName String
+  note            String?
+  createdAt       DateTime           @default(now())
+
+  @@index([readingId, createdAt])
+}
+
+model DoctorVisit {
+  id            String   @id @default(cuid())
+  patient       Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientId     String
+  visitedAt     DateTime @default(now())
+  doctorName    String
+  treatmentNote String?
+  createdAt     DateTime @default(now())
+
+  @@index([patientId, visitedAt])
+}
